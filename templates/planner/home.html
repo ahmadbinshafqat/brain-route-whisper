@@ -1,0 +1,49 @@
+{% extends 'base.html' %}
+{% block title %}Plan a route · Route Whisper{% endblock %}
+{% block content %}
+<section class="hero">
+    <div>
+        <p class="eyebrow">Tiny trip planner</p>
+        <h1>Paste places. Get a smarter walking order.</h1>
+        <p>Route Whisper accepts 5-20 stops, geocodes them, and runs a nearest-neighbor + 2-opt route optimizer.</p>
+    </div>
+</section>
+
+<div class="grid two-col">
+    <section class="card">
+        <h2>Create route</h2>
+        <form method="post">
+            {% csrf_token %}
+            <label for="{{ form.title.id_for_label }}">Trip title</label>
+            {{ form.title }}
+            {% if form.title.errors %}<div class="error">{{ form.title.errors }}</div>{% endif %}
+
+            <label for="{{ form.origin_optional.id_for_label }}">Optional starting point</label>
+            {{ form.origin_optional }}
+            <p class="help">{{ form.origin_optional.help_text }}</p>
+
+            <label for="{{ form.stops_text.id_for_label }}">Stops</label>
+            {{ form.stops_text }}
+            <p class="help">{{ form.stops_text.help_text }}</p>
+            {% if form.stops_text.errors %}<div class="error">{{ form.stops_text.errors }}</div>{% endif %}
+
+            <button type="submit">Optimize my walk</button>
+        </form>
+    </section>
+
+    <aside class="card muted-card">
+        <h2>Recent routes</h2>
+        {% if recent_trips %}
+            <ul class="recent-list">
+                {% for trip in recent_trips %}
+                    <li><a href="{% url 'trip_detail' trip.id %}">{{ trip.title }}</a><span>{{ trip.created_at|date:'M j, H:i' }}</span></li>
+                {% endfor %}
+            </ul>
+        {% else %}
+            <p>No routes yet. Your first optimized trip will appear here.</p>
+        {% endif %}
+        <h3>Tip</h3>
+        <p>For guaranteed offline results, use <code>Place name | latitude,longitude</code>. Plain addresses use online geocoding when enabled, then fall back to stable demo coordinates.</p>
+    </aside>
+</div>
+{% endblock %}

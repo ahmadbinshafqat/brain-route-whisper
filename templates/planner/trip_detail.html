@@ -1,0 +1,40 @@
+{% extends 'base.html' %}
+{% block title %}{{ trip.title }} · Route Whisper{% endblock %}
+{% block content %}
+<section class="detail-header">
+    <div>
+        <p class="eyebrow">Optimized route</p>
+        <h1>{{ trip.title }}</h1>
+        <p>
+            Method: <strong>{{ route_run.optimization_method }}</strong>
+            · Estimated distance: <strong>{{ route_run.total_distance_optional }} km</strong>
+        </p>
+    </div>
+    <a class="button-secondary" href="/">Plan another</a>
+</section>
+
+<div class="grid two-col detail-grid">
+    <section class="card">
+        <h2>Walking order</h2>
+        <ol class="stop-list">
+            {% for stop in stops %}
+                <li>
+                    <strong>{{ stop.label }}</strong>
+                    <span>{{ stop.address }}</span>
+                    <small>{{ stop.lat }}, {{ stop.lng }}</small>
+                </li>
+            {% endfor %}
+        </ol>
+    </section>
+    <section class="card map-card">
+        <h2>Map</h2>
+        <div id="map"></div>
+    </section>
+</div>
+{% endblock %}
+{% block scripts %}
+<script>
+    window.ROUTE_POINTS = {{ map_points_json|safe }};
+</script>
+<script src="/static/js/map.js"></script>
+{% endblock %}
