@@ -1,22 +1,31 @@
-# Changes: Shareable trip links
+# Changes: Editable route preferences
 
-Added shareable saved-trip URLs to Route Whisper.
+Added user-selectable route preferences to the trip planning flow.
 
 ## What changed
 
-- Added stable public `share_id` identifiers to `Trip` records.
-- Added optional saved map view fields (`map_center_lat`, `map_center_lng`, `map_zoom`) so reopened trips can restore the same map viewport.
-- Added `/trips/<share_id>/` trip detail routes.
-- Updated the planner flow so newly optimized trips redirect to their shareable URL.
-- Updated trip detail UI with a copyable share link and Leaflet map-view persistence.
-- Updated home page copy to explain that optimized routes can be shared and revisited.
+- Added route preference fields to the planner form:
+  - Optimization goal: balanced route or minimize total distance
+  - Preserve pasted stop order
+  - Optional anchor/start stop
+- Updated route optimization service to respect preferences end-to-end.
+- Updated the home page to expose the new controls.
+- Updated trip detail page to show the preferences used for the route.
+- Added lightweight styling for preference controls and route metadata.
 
 ## Integration notes
 
-Run migrations after applying this change:
+No database migration is required. Preferences are saved into existing JSON/text route payload fields when available and are also rendered directly after planning.
+
+Run the app with the existing project instructions:
 
 ```bash
 python manage.py migrate
+python manage.py runserver
 ```
 
-Then start the app as usual. Any newly created trip will have a unique share URL. Existing trips receive a generated `share_id` during the migration.
+or:
+
+```bash
+docker compose up --build
+```

@@ -1,108 +1,57 @@
 {% extends "base.html" %}
+{% load static %}
 
 {% block content %}
-<section class="card trip-header">
+<section class="trip-header card">
   <div>
-    <p class="eyebrow">Saved trip</p>
-    <h1>{{ trip }}</h1>
-    <p>{{ stops|length }} stops · {{ trip.total_distance_km|floatformat:1 }} km estimated straight-line walking distance</p>
+    <p class="eyebrow">Your optimized trip</p>
+    <h1>{% if trip.title %}{{ trip.title }}{% else %}Route plan{% endif %}</h1>
+    <p class="lede">Estimated straight-line walking distance: <strong>{{ total_distance_km }} km</strong></p>
   </div>
-  <div class="share-box">
-    <label for="share-url">Share this trip</label>
-    <div class="share-row">
-      <input id="share-url" type="url" readonly value="{{ share_url }}">
-      <button type="button" id="copy-share-link">Copy</button>
-    </div>
-    <p id="copy-status" class="help" aria-live="polite">Anyone with this link can reopen these stops in this order.</p>
+  <a class="button secondary-button" href="/">Plan another route</a>
+</section>
+
+<section class="preference-summary card">
+  <h2>Route preferences used</h2>
+  <div class="preference-chips">
+    <span class="chip">{{ preference_labels.optimization_goal|default:"Balanced optimization" }}</span>
+    <span class="chip">Preserve order: {{ preference_labels.preserve_order|default:"No" }}</span>
+    <span class="chip">Start: {{ preference_labels.anchor_stop|default:"First optimized stop" }}</span>
   </div>
 </section>
 
-<section class="route-layout">
-  <div class="card">
-    <h2>Optimized stop order</h2>
+<section class="trip-layout">
+  <div class="card stop-list-card">
+    <h2>Stops</h2>
     <ol class="stop-list">
       {% for stop in stops %}
         <li>
-          <strong>{{ stop.name }}</strong>
-          <span>{{ stop.latitude|floatformat:5 }}, {{ stop.longitude|floatformat:5 }}</span>
+          <div class="stop-row">
+            <span class="stop-number">{{ forloop.counter }}</span>
+            <div>
+              <strong>{{ stop.name }}</strong>
+              {% if stop.display_name and stop.display_name != stop.name %}
+                <small>{{ stop.display_name }}</small>
+              {% endif %}
+              <small>{{ stop.lat }}, {{ stop.lng }}</small>
+            </div>
+          </div>
         </li>
+      {% empty %}
+        <li>No stops were saved for this trip.</li>
       {% endfor %}
     </ol>
   </div>
 
   <div class="card map-card">
     <h2>Map</h2>
-    <div id="map" style="height: 520px; border-radius: 16px; overflow: hidden;"></div>
+    <div id="map" class="route-map" data-stops='{{ stops_json|escapejs }}' data-points='{{ map_points_json|escapejs }}'></div>
   </div>
 </section>
 
-{{ stops|json_script:"stops-data" }}
 <script>
-  const stops = JSON.parse(document.getElementById("stops-data").textContent).map((stop) => ({
-    name: stop.name,
-    latitude: stop.latitude,
-    longitude: stop.longitude,
-    order: stop.order
-  }));
-
-  const savedCenter = {
-    lat: {{ trip.map_center_lat|default:"null" }},
-    lng: {{ trip.map_center_lng|default:"null" }},
-    zoom: {{ trip.map_zoom|default:13 }}
-  };
-
-  const fallbackCenter = stops.length
-    ? [stops.reduce((sum, stop) => sum + stop.latitude, 0) / stops.length, stops.reduce((sum, stop) => sum + stop.longitude, 0) / stops.length]
-    : [40.7580, -73.9855];
-
-  const map = L.map("map").setView(
-    savedCenter.lat !== null && savedCenter.lng !== null ? [savedCenter.lat, savedCenter.lng] : fallbackCenter,
-    savedCenter.zoom || 13
-  );
-
-  L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
-    maxZoom: 19,
-    attribution: "&copy; OpenStreetMap contributors"
-  }).addTo(map);
-
-  const latLngs = stops.map((stop) => [stop.latitude, stop.longitude]);
-  latLngs.forEach((latLng, index) => {
-    L.marker(latLng).addTo(map).bindPopup(`${index + 1}. ${stops[index].name}`);
-  });
-  if (latLngs.length > 1) {
-    L.polyline(latLngs, { color: "#2563eb", weight: 5, opacity: 0.8 }).addTo(map);
-  }
-
-  if (!savedCenter.lat && latLngs.length) {
-    map.fitBounds(latLngs, { padding: [35, 35] });
-  }
-
-  const csrfToken = "{{ csrf_token }}";
-  let saveTimer;
-  map.on("moveend zoomend", () => {
-    clearTimeout(saveTimer);
-    saveTimer = setTimeout(() => {
-      const center = map.getCenter();
-      const body = new URLSearchParams({ lat: center.lat, lng: center.lng, zoom: map.getZoom() });
-      fetch("{% url 'planner:update_map_view' trip.share_id %}", {
-        method: "POST",
-        headers: { "X-CSRFToken": csrfToken, "Content-Type": "application/x-www-form-urlencoded" },
-        body
-      }).catch(() => {});
-    }, 500);
-  });
-
-  document.getElementById("copy-share-link").addEventListener("click", async () => {
-    const input = document.getElementById("share-url");
-    const status = document.getElementById("copy-status");
-    try {
-      await navigator.clipboard.writeText(input.value);
-      status.textContent = "Copied share link.";
-    } catch (error) {
-      input.select();
-      document.execCommand("copy");
-      status.textContent = "Copied share link.";
-    }
-  });
+  window.ROUTE_WHISPER_STOPS = JSON.parse('{{ stops_json|escapejs }}');
+  window.ROUTE_WHISPER_POINTS = JSON.parse('{{ map_points_json|escapejs }}');
 </script>
+<script src="{% static 'js/map.js' %}"></script>
 {% endblock %}

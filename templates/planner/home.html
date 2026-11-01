@@ -2,43 +2,61 @@
 
 {% block content %}
 <section class="hero">
-  <div>
+  <div class="hero-copy">
     <p class="eyebrow">Route Whisper</p>
-    <h1>Turn a pasted stop list into a shareable walking route.</h1>
-    <p class="lede">
-      Paste 5-20 places, optimize the order, then send the saved trip link to friends so everyone opens the exact same stops, order, and map view.
-    </p>
+    <h1>Turn a list of places into a practical walking route.</h1>
+    <p class="lede">Paste your stops, choose the route behavior that fits your day, and get an ordered itinerary with a shareable map.</p>
   </div>
 </section>
 
-<section class="card">
-  <h2>Plan a route</h2>
+<section class="card planner-card">
   <form method="post" class="trip-form">
     {% csrf_token %}
-    {{ form.non_field_errors }}
-    {% for field in form %}
-      <div class="form-row">
-        <label for="{{ field.id_for_label }}">{{ field.label }}</label>
-        {{ field }}
-        {% if field.help_text %}<p class="help">{{ field.help_text }}</p>{% endif %}
-        {{ field.errors }}
+
+    {% if form.non_field_errors %}
+      <div class="form-errors">{{ form.non_field_errors }}</div>
+    {% endif %}
+
+    <div class="form-group">
+      <label for="{{ form.stops.id_for_label }}">{{ form.stops.label }}</label>
+      {{ form.stops }}
+      {% if form.stops.help_text %}<p class="help-text">{{ form.stops.help_text }}</p>{% endif %}
+      {% for error in form.stops.errors %}<p class="error-text">{{ error }}</p>{% endfor %}
+    </div>
+
+    <div class="preference-panel">
+      <div class="preference-heading">
+        <h2>Route preferences</h2>
+        <p>Adjust how Route Whisper orders your itinerary before planning.</p>
       </div>
-    {% endfor %}
-    <button type="submit">Optimize and create share link</button>
+
+      <div class="form-grid">
+        <div class="form-group">
+          <label for="{{ form.optimization_goal.id_for_label }}">{{ form.optimization_goal.label }}</label>
+          {{ form.optimization_goal }}
+          {% if form.optimization_goal.help_text %}<p class="help-text">{{ form.optimization_goal.help_text }}</p>{% endif %}
+          {% for error in form.optimization_goal.errors %}<p class="error-text">{{ error }}</p>{% endfor %}
+        </div>
+
+        <div class="form-group">
+          <label for="{{ form.anchor_stop.id_for_label }}">{{ form.anchor_stop.label }}</label>
+          {{ form.anchor_stop }}
+          {% if form.anchor_stop.help_text %}<p class="help-text">{{ form.anchor_stop.help_text }}</p>{% endif %}
+          {% for error in form.anchor_stop.errors %}<p class="error-text">{{ error }}</p>{% endfor %}
+        </div>
+      </div>
+
+      <label class="checkbox-row" for="{{ form.preserve_order.id_for_label }}">
+        {{ form.preserve_order }}
+        <span>
+          <strong>{{ form.preserve_order.label }}</strong>
+          <small>{{ form.preserve_order.help_text }}</small>
+        </span>
+      </label>
+      {% for error in form.preserve_order.errors %}<p class="error-text">{{ error }}</p>{% endfor %}
+    </div>
+
+    <button type="submit" class="button primary-button">Plan my route</button>
   </form>
 </section>
-
-{% if recent_trips %}
-<section class="card">
-  <h2>Recently saved trips</h2>
-  <ul class="recent-trips">
-    {% for trip in recent_trips %}
-      <li>
-        <a href="{{ trip.get_absolute_url }}">{{ trip }}</a>
-        <span>{{ trip.stops.count }} stops · {{ trip.total_distance_km|floatformat:1 }} km</span>
-      </li>
-    {% endfor %}
-  </ul>
-</section>
-{% endif %}
 {% endblock %}

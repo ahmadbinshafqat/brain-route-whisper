@@ -1,161 +1,157 @@
-import hashlib
-import math
-import re
+import json
+from typing import Any, Dict, Optional
 
-from django.http import JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
-from django.views.decorators.http import require_POST
+from django.urls import reverse
+from django.views.decorators.http import require_http_methods
 
 from .forms import TripForm
-from .models import Stop, Trip
+from .models import Trip
+from .services import plan_trip
 
-_COORD_RE = re.compile(r"^\s*(?P<label>.*?)\s*(?:\||,)?\s*(?P<lat>-?\d+(?:\.\d+)?)\s*,\s*(?P<lng>-?\d+(?:\.\d+)?)\s*$")
+
+def _field_names() -> set:
+    return {field.name for field in Trip._meta.fields}
 
 
+def _set_if_field(trip: Trip, field_names: set, name: str, value: Any) -> None:
+    if name in field_names:
+        setattr(trip, name, value)
+
+
+def _json_dumps(value: Any) -> str:
+    return json.dumps(value, ensure_ascii=False)
+
+
+def _json_loads(value: Any, default: Any) -> Any:
+    if value in (None, ""):
+        return default
+    if isinstance(value, (list, dict)):
+        return value
+    try:
+        return json.loads(value)
+    except Exception:
+        return default
+
+
+def _first_existing_attr(obj: Any, names, default=None):
+    for name in names:
+        if hasattr(obj, name):
+            value = getattr(obj, name)
+            if value not in (None, ""):
+                return value
+    return default
+
+
+def _trip_detail_url(trip: Trip) -> str:
+    for url_name in ("planner:trip_detail", "trip_detail"):
+        try:
+            if hasattr(trip, "share_token") and trip.share_token:
+                return reverse(url_name, kwargs={"share_token": trip.share_token})
+            if hasattr(trip, "slug") and trip.slug:
+                return reverse(url_name, kwargs={"slug": trip.slug})
+            return reverse(url_name, kwargs={"pk": trip.pk})
+        except Exception:
+            continue
+    return f"/trips/{trip.pk}/"
+
+
+def _create_trip(raw_stops: str, route: Dict[str, Any]) -> Trip:
+    field_names = _field_names()
+    trip = Trip()
+
+    _set_if_field(trip, field_names, "title", route["stops"][0]["name"] if route.get("stops") else "Untitled trip")
+    _set_if_field(trip, field_names, "raw_stops", raw_stops)
+    _set_if_field(trip, field_names, "raw_input", raw_stops)
+    _set_if_field(trip, field_names, "input_text", raw_stops)
+    _set_if_field(trip, field_names, "stops_text", raw_stops)
+
+    payload = {
+        "stops": route["stops"],
+        "total_distance_km": route["total_distance_km"],
+        "preferences": route["preferences"],
+        "preference_labels": route["preference_labels"],
+        "map_points": route["map_points"],
+    }
+    payload_json = _json_dumps(payload)
+    stops_json = _json_dumps(route["stops"])
+
+    for name in ("route_json", "plan_json", "data", "payload"):
+        _set_if_field(trip, field_names, name, payload_json)
+    for name in ("stops_json", "ordered_stops_json", "optimized_stops"):
+        _set_if_field(trip, field_names, name, stops_json)
+    for name in ("total_distance_km", "distance_km"):
+        _set_if_field(trip, field_names, name, route["total_distance_km"])
+
+    trip.save()
+    return trip
+
+
+def _route_from_trip(trip: Trip) -> Dict[str, Any]:
+    payload = _json_loads(_first_existing_attr(trip, ["route_json", "plan_json", "data", "payload"], None), {})
+    stops = payload.get("stops") if isinstance(payload, dict) else None
+    if not stops:
+        stops = _json_loads(_first_existing_attr(trip, ["stops_json", "ordered_stops_json", "optimized_stops"], "[]"), [])
+
+    distance = None
+    if isinstance(payload, dict):
+        distance = payload.get("total_distance_km")
+    if distance is None:
+        distance = _first_existing_attr(trip, ["total_distance_km", "distance_km"], 0)
+
+    preferences = payload.get("preferences", {}) if isinstance(payload, dict) else {}
+    preference_labels = payload.get("preference_labels", {}) if isinstance(payload, dict) else {}
+    if not preference_labels:
+        preference_labels = {
+            "optimization_goal": "Minimize total distance" if preferences.get("optimization_goal") == "distance" else "Balanced optimization",
+            "preserve_order": "Yes" if preferences.get("preserve_order") else "No",
+            "anchor_stop": preferences.get("anchor_stop") or "First optimized stop",
+        }
+
+    return {
+        "stops": stops or [],
+        "total_distance_km": distance or 0,
+        "preferences": preferences,
+        "preference_labels": preference_labels,
+        "map_points": [[stop.get("lat"), stop.get("lng")] for stop in (stops or []) if stop.get("lat") is not None and stop.get("lng") is not None],
+    }
+
+
+@require_http_methods(["GET", "POST"])
 def home(request):
     if request.method == "POST":
         form = TripForm(request.POST)
         if form.is_valid():
-            raw_stops = _first_text_value(form.cleaned_data)
-            trip = _create_trip(raw_stops)
-            return redirect(trip.get_absolute_url())
+            raw_stops = form.cleaned_data["stops"]
+            route = plan_trip(raw_stops, form.get_preferences())
+            trip = _create_trip(raw_stops, route)
+            return redirect(_trip_detail_url(trip))
     else:
         form = TripForm()
 
-    recent_trips = Trip.objects.prefetch_related("stops")[:5]
-    return render(request, "planner/home.html", {"form": form, "recent_trips": recent_trips})
+    return render(request, "planner/home.html", {"form": form})
 
 
-def trip_detail(request, share_id):
-    trip = get_object_or_404(Trip.objects.prefetch_related("stops"), share_id=share_id)
-    stops = list(trip.stops.order_by("order"))
-    share_url = request.build_absolute_uri(trip.get_absolute_url())
+def trip_detail(request, pk: Optional[int] = None, share_token: Optional[str] = None, slug: Optional[str] = None):
+    if share_token is not None and "share_token" in _field_names():
+        trip = get_object_or_404(Trip, share_token=share_token)
+    elif slug is not None and "slug" in _field_names():
+        trip = get_object_or_404(Trip, slug=slug)
+    else:
+        trip = get_object_or_404(Trip, pk=pk)
+
+    route = _route_from_trip(trip)
     return render(
         request,
         "planner/trip_detail.html",
         {
             "trip": trip,
-            "stops": stops,
-            "share_url": share_url,
+            "route": route,
+            "stops": route["stops"],
+            "total_distance_km": route["total_distance_km"],
+            "preferences": route["preferences"],
+            "preference_labels": route["preference_labels"],
+            "stops_json": _json_dumps(route["stops"]),
+            "map_points_json": _json_dumps(route["map_points"]),
         },
     )
-
-
-@require_POST
-def update_map_view(request, share_id):
-    trip = get_object_or_404(Trip, share_id=share_id)
-    try:
-        trip.map_center_lat = float(request.POST.get("lat"))
-        trip.map_center_lng = float(request.POST.get("lng"))
-        trip.map_zoom = max(1, min(20, int(float(request.POST.get("zoom", 13)))))
-        trip.save(update_fields=["map_center_lat", "map_center_lng", "map_zoom"])
-    except (TypeError, ValueError):
-        return JsonResponse({"ok": False, "error": "Invalid map view."}, status=400)
-    return JsonResponse({"ok": True})
-
-
-def _first_text_value(cleaned_data):
-    for value in cleaned_data.values():
-        if isinstance(value, str):
-            return value.strip()
-    return ""
-
-
-def _create_trip(raw_stops):
-    parsed = [_parse_stop(line) for line in raw_stops.splitlines() if line.strip()]
-    optimized = _nearest_neighbor(parsed)
-    total_distance_km = _route_distance(optimized)
-
-    title = optimized[0]["name"] if optimized else "Shared trip"
-    trip = Trip.objects.create(
-        title=title,
-        raw_stops=raw_stops,
-        total_distance_km=total_distance_km,
-    )
-
-    for index, stop in enumerate(optimized):
-        Stop.objects.create(
-            trip=trip,
-            name=stop["name"],
-            query=stop["query"],
-            latitude=stop["latitude"],
-            longitude=stop["longitude"],
-            order=index,
-        )
-
-    if optimized:
-        trip.map_center_lat = sum(stop["latitude"] for stop in optimized) / len(optimized)
-        trip.map_center_lng = sum(stop["longitude"] for stop in optimized) / len(optimized)
-        trip.map_zoom = 13
-        trip.save(update_fields=["map_center_lat", "map_center_lng", "map_zoom"])
-
-    return trip
-
-
-def _parse_stop(line):
-    match = _COORD_RE.match(line)
-    if match:
-        label = (match.group("label") or "Stop").strip(" |,") or "Stop"
-        return {
-            "name": label,
-            "query": line.strip(),
-            "latitude": float(match.group("lat")),
-            "longitude": float(match.group("lng")),
-        }
-
-    digest = hashlib.sha256(line.strip().lower().encode("utf-8")).hexdigest()
-    lat_offset = (int(digest[:8], 16) / 0xFFFFFFFF - 0.5) * 0.08
-    lng_offset = (int(digest[8:16], 16) / 0xFFFFFFFF - 0.5) * 0.08
-    return {
-        "name": line.strip(),
-        "query": line.strip(),
-        "latitude": 40.7580 + lat_offset,
-        "longitude": -73.9855 + lng_offset,
-    }
-
-
-def _nearest_neighbor(stops):
-    if len(stops) <= 2:
-        return stops
-
-    remaining = stops[:]
-    route = [remaining.pop(0)]
-    while remaining:
-        current = route[-1]
-        nearest_index = min(
-            range(len(remaining)),
-            key=lambda idx: _haversine_km(current, remaining[idx]),
-        )
-        route.append(remaining.pop(nearest_index))
-    return _two_opt(route)
-
-
-def _two_opt(route):
-    improved = True
-    best = route[:]
-    while improved:
-        improved = False
-        for i in range(1, len(best) - 2):
-            for j in range(i + 1, len(best)):
-                if j - i == 1:
-                    continue
-                candidate = best[:]
-                candidate[i:j] = reversed(candidate[i:j])
-                if _route_distance(candidate) < _route_distance(best):
-                    best = candidate
-                    improved = True
-    return best
-
-
-def _route_distance(stops):
-    return sum(_haversine_km(a, b) for a, b in zip(stops, stops[1:]))
-
-
-def _haversine_km(a, b):
-    radius_km = 6371.0
-    lat1 = math.radians(a["latitude"])
-    lat2 = math.radians(b["latitude"])
-    dlat = lat2 - lat1
-    dlng = math.radians(b["longitude"] - a["longitude"])
-    h = math.sin(dlat / 2) ** 2 + math.cos(lat1) * math.cos(lat2) * math.sin(dlng / 2) ** 2
-    return 2 * radius_km * math.asin(math.sqrt(h))
